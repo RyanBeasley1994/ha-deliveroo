@@ -1,0 +1,61 @@
+# Deliveroo order map: a map card, and two ways to show it in a popup.
+# Entity ids depend on your language and account name: check yours in
+# Settings → Entities (e.g. device_tracker.deliveroo_rider_location).
+
+# ── 1. Map card (paste into a dashboard, or use it inside a popup below) ─────
+type: map
+title: Deliveroo
+default_zoom: 15
+hours_to_show: 0
+entities:
+  - entity: device_tracker.deliveroo_rider_location
+    name: Rider
+  - entity: device_tracker.deliveroo_delivery_location
+    name: Home
+  - entity: device_tracker.deliveroo_restaurant_location
+    name: Restaurant
+
+# ── 2. Button that opens the map in a popup (needs browser_mod from HACS) ────
+# type: button
+# name: Where is my order?
+# icon: mdi:map-marker-path
+# tap_action:
+#   action: fire-dom-event
+#   browser_mod:
+#     service: browser_mod.popup
+#     data:
+#       title: Deliveroo
+#       size: wide
+#       content:
+#         type: map
+#         default_zoom: 15
+#         hours_to_show: 0
+#         entities:
+#           - device_tracker.deliveroo_rider_location
+#           - device_tracker.deliveroo_delivery_location
+#           - device_tracker.deliveroo_restaurant_location
+
+# ── 3. Link to Deliveroo's own tracking page (with its live map) ────────────
+# Uses the tracking_url attribute, e.g. https://deliveroo.co.uk/orders/<id>/status
+# (you must be logged in to Deliveroo in that browser / the companion app).
+# type: markdown
+# content: >
+#   {% set url = state_attr('sensor.deliveroo_order_status', 'tracking_url') %}
+#   {% if url %}[🛵 Open Deliveroo tracking]({{ url }}){% else %}No order in progress{% endif %}
+
+# ── 4. Automation: phone notification with the map when the rider sets off ───
+# triggers:
+#   - trigger: event
+#     event_type: deliveroo_order_update
+#     event_data:
+#       rider_route: TO_CUSTOMER
+# actions:
+#   - action: deliveroo.get_order_map
+#     response_variable: order
+#   - action: notify.mobile_app_iphone
+#     data:
+#       title: "🛵 {{ order.restaurant }} is on the way"
+#       message: "Arriving {{ order.eta }}"
+#       data:
+#         url: "{{ order.tracking_url or order.map_url }}"
+#         clickAction: "{{ order.tracking_url or order.map_url }}"

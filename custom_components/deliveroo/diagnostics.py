@@ -23,6 +23,28 @@ TO_REDACT = {
     # May contain the rider's name: third-party personal data.
     "advisory",
     "delivery_drn_id",
+    # Map points and the customer's address: keep the keys, hide the values.
+    "latitude",
+    "longitude",
+    "lat",
+    "lng",
+    "lon",
+    "long",
+    "coordinates",
+    "address",
+    "address1",
+    "address2",
+    "line1",
+    "line2",
+    "postcode",
+    "post_code",
+    "phone",
+    "phone_number",
+    "first_name",
+    "last_name",
+    "full_name",
+    "email",
+    "tracking_url",
 }
 
 
@@ -53,6 +75,10 @@ async def async_get_config_entry_diagnostics(
             "progress": status.progress,
             "is_completed": status.is_completed,
             "is_failed": status.is_failed,
+            "has_location": status.has_location,
             "raw_attributes": async_redact_data(status.raw_attributes, TO_REDACT),
+            # Other objects of the status document (order, customer, rider, …):
+            # shows where Deliveroo puts the map points.
+            "raw_included": async_redact_data(status.raw_included, TO_REDACT),
         },
     }

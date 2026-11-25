@@ -125,6 +125,7 @@ class DeliverooCoordinator(DataUpdateCoordinator[DeliverooData]):
             SIMULATION_DURATION.total_seconds(),
             lang=self.client.language,
             start_local=dt_util.as_local(start),
+            home=(self.hass.config.latitude, self.hass.config.longitude),
         )
         status = parse_order_status(DEMO_ORDER_ID, payload)
         self._fire_event_if_changed(status, simulated=True)
@@ -268,6 +269,8 @@ class DeliverooCoordinator(DataUpdateCoordinator[DeliverooData]):
             except DeliverooError as err:
                 raise UpdateFailed(f"Deliveroo order status: {err}") from err
 
+            if status.tracking_url is None:
+                status.tracking_url = self.client.status_page_url(order_id)
             if status.sharing_token:
                 self._sharing_tokens[order_id] = status.sharing_token
             if status.is_completed or status.is_failed:
@@ -326,6 +329,7 @@ class DeliverooCoordinator(DataUpdateCoordinator[DeliverooData]):
                 "restaurant": status.restaurant_name,
                 "is_completed": status.is_completed,
                 "is_failed": status.is_failed,
+                "tracking_url": status.tracking_url,
                 "simulated": simulated,
             },
         )

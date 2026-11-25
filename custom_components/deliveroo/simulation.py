@@ -65,11 +65,14 @@ def build_demo_payload(
     *,
     lang: str,
     start_local: datetime,
+    home: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Return the status document of the demo order ``elapsed`` seconds in.
 
     The five steps get an equal share of ``duration``; once it is over the
-    order is completed.
+    order is completed. With ``home`` (latitude, longitude) the demo also has
+    map points: the restaurant about 1.5 km away, the delivery address at home
+    and a rider who rides to the restaurant, then home.
     """
     text = _TEXT.get(lang, _TEXT["en"])
     fraction = max(0.0, elapsed / duration) if duration > 0 else 1.0
@@ -113,15 +116,54 @@ def build_demo_payload(
     if not completed and step == 3:
         attributes["advisory"] = text["advisory"]
 
+    included: list[dict[str, Any]] = [
+        {
+            "type": "order",
+            "attributes": {
+                "order_number": "0000",
+                "restaurant_name": text["restaurant"],
+            },
+        }
+    ]
+    if home is not None:
+        included.extend(_demo_map(home, fraction, completed))
+
     return {
         "data": {"type": "consumer_order_status", "attributes": attributes},
-        "included": [
-            {
-                "type": "order",
-                "attributes": {
-                    "order_number": "0000",
-                    "restaurant_name": text["restaurant"],
-                },
-            }
-        ],
+        "included": included,
     }
+
+
+# The restaurant is this far (degrees) north-east of home, the rider starts
+# this far south-east of the restaurant.
+_RESTAURANT_OFFSET = (0.010, 0.012)
+_RIDER_START_OFFSET = (-0.004, 0.006)
+
+
+def _point(lat: float, lon: float) -> dict[str, float]:
+    return {"lat": round(lat, 6), "lng": round(lon, 6)}
+
+
+def _between(a: tuple[float, float], b: tuple[float, float], t: float) -> tuple[float, float]:
+    t = min(max(t, 0.0), 1.0)
+    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+
+def _demo_map(
+    home: tuple[float, float], fraction: float, completed: bool
+) -> list[dict[str, Any]]:
+    """Map points of the demo order at ``fraction`` of its duration."""
+    restaurant = (home[0] + _RESTAURANT_OFFSET[0], home[1] + _RESTAURANT_OFFSET[1])
+    start = (restaurant[0] + _RIDER_START_OFFSET[0], restaurant[1] + _RIDER_START_OFFSET[1])
+    # Steps 1-3 (60 %): the rider rides to the restaurant; 4-5: to the customer.
+    if completed:
+        rider = home
+    elif fraction < 0.6:
+        rider = _between(start, restaurant, fraction / 0.6)
+    else:
+        rider = _between(restaurant, home, (fraction - 0.6) / 0.4)
+    return [
+        {"type": "restaurant", "attributes": {"location": _point(*restaurant)}},
+        {"type": "customer", "attributes": {"location": _point(*home)}},
+        {"type": "rider", "attributes": {"location": _point(*rider)}},
+    ]

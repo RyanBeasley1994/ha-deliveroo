@@ -33,3 +33,6 @@ SIMULATION_DURATION: Final = timedelta(seconds=150)
 SIMULATION_INTERVAL: Final = timedelta(seconds=5)
 
 EVENT_ORDER_UPDATE: Final = f"{DOMAIN}_order_update"
+
+SERVICE_GET_ORDER_MAP: Final = "get_order_map"
+ATTR_CONFIG_ENTRY_ID: Final = "config_entry_id"

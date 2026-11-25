@@ -197,6 +197,127 @@ class DeliverooStep:
     is_current: bool
 
 
+@dataclass(frozen=True, slots=True)
+class DeliverooLocation:
+    """A point on the map (WGS84)."""
+
+    latitude: float
+    longitude: float
+
+    def as_dict(self) -> dict[str, float]:
+        """Return the point as a plain dict."""
+        return {"latitude": self.latitude, "longitude": self.longitude}
+
+
+# Where coordinates may live in the status document. The exact field names
+# Deliveroo uses have not been confirmed, so the parser accepts several
+# spellings and shapes ({lat, lng}, {latitude, longitude}, GeoJSON Point),
+# nested at most a few levels deep.
+_LAT_KEYS = ("latitude", "lat")
+_LON_KEYS = ("longitude", "lng", "lon", "long")
+_NESTED_KEYS = (
+    "location",
+    "coordinates",
+    "coords",
+    "position",
+    "geo",
+    "geolocation",
+    "point",
+    "last_known_location",
+    "current_location",
+    "address",
+    "delivery_address",
+)
+_RIDER_KEYS = (
+    "rider_location",
+    "rider_position",
+    "rider_coordinates",
+    "courier_location",
+    "driver_location",
+)
+_DELIVERY_KEYS = (
+    "delivery_location",
+    "delivery_address",
+    "delivery_coordinates",
+    "customer_location",
+    "dropoff_location",
+    "drop_off_location",
+)
+_RESTAURANT_KEYS = (
+    "restaurant_location",
+    "restaurant_coordinates",
+    "restaurant_address",
+    "pickup_location",
+)
+_RIDER_TYPES = {"rider", "driver", "courier", "rider_location"}
+_DELIVERY_TYPES = {"customer", "address", "delivery_address", "consumer_address"}
+_RESTAURANT_TYPES = {"restaurant"}
+_TRACKING_URL_KEYS = ("customer_facing_link", "tracking_url", "share_url")
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _make_location(lat: Any, lon: Any) -> DeliverooLocation | None:
+    latitude, longitude = _as_float(lat), _as_float(lon)
+    if latitude is None or longitude is None:
+        return None
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return None
+    if latitude == 0 and longitude == 0:  # "unknown" placeholder
+        return None
+    return DeliverooLocation(latitude, longitude)
+
+
+def find_location(value: Any, depth: int = 0) -> DeliverooLocation | None:
+    """Find a lat/lon pair in a (possibly nested) JSON value."""
+    if depth > 4 or not isinstance(value, dict):
+        return None
+    lat = next((value[k] for k in _LAT_KEYS if k in value), None)
+    lon = next((value[k] for k in _LON_KEYS if k in value), None)
+    if (location := _make_location(lat, lon)) is not None:
+        return location
+    coordinates = value.get("coordinates")
+    if (
+        value.get("type") == "Point"
+        and isinstance(coordinates, list)
+        and len(coordinates) >= 2
+    ):
+        # GeoJSON order is [longitude, latitude].
+        return _make_location(coordinates[1], coordinates[0])
+    for key in _NESTED_KEYS:
+        if (location := find_location(value.get(key), depth + 1)) is not None:
+            return location
+    return None
+
+
+def _location_from(
+    sources: list[dict[str, Any]],
+    keys: tuple[str, ...],
+    included: list[dict[str, Any]],
+    types: set[str],
+) -> DeliverooLocation | None:
+    for source in sources:
+        for key in keys:
+            if (location := find_location(source.get(key))) is not None:
+                return location
+    for item in included:
+        if str(item.get("type") or "").lower() in types:
+            if (location := find_location(item.get("attributes"))) is not None:
+                return location
+    return None
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     """Parse an ISO 8601 timestamp such as 2026-10-04T18:03:18Z."""
     if not isinstance(value, str) or not value:
@@ -230,7 +351,19 @@ class DeliverooOrderStatus:
     rider_status: str | None = None
     estimated_delivery: datetime | None = None
     steps: list[DeliverooStep] = field(default_factory=list)
+    rider_location: DeliverooLocation | None = None
+    delivery_location: DeliverooLocation | None = None
+    restaurant_location: DeliverooLocation | None = None
+    tracking_url: str | None = None
     raw_attributes: dict[str, Any] = field(default_factory=dict, repr=False)
+    raw_included: list[dict[str, Any]] = field(default_factory=list, repr=False)
+
+    @property
+    def has_location(self) -> bool:
+        """Return True if Deliveroo sent at least one point for the map."""
+        return any(
+            (self.rider_location, self.delivery_location, self.restaurant_location)
+        )
 
     @property
     def step_index(self) -> int | None:
@@ -350,11 +483,25 @@ def parse_order_status(order_id: str, payload: dict[str, Any]) -> DeliverooOrder
     data = payload.get("data") or {}
     attrs: dict[str, Any] = data.get("attributes") or {}
 
+    included = [
+        item for item in payload.get("included") or [] if isinstance(item, dict)
+    ]
     order_attrs: dict[str, Any] = {}
-    for item in payload.get("included") or []:
+    for item in included:
         if item.get("type") == "order":
             order_attrs = item.get("attributes") or {}
             break
+    sources = [attrs, order_attrs]
+    tracking_url = next(
+        (
+            source[key]
+            for source in sources
+            for key in _TRACKING_URL_KEYS
+            if isinstance(source.get(key), str)
+            and source[key].startswith(("https://", "http://"))
+        ),
+        None,
+    )
 
     progress = attrs.get("current_progress_percentage")
     analytics = attrs.get("analytics") if isinstance(attrs.get("analytics"), dict) else {}
@@ -390,7 +537,19 @@ def parse_order_status(order_id: str, payload: dict[str, Any]) -> DeliverooOrder
         rider_status=analytics.get("rider_status"),
         estimated_delivery=_parse_datetime(analytics.get("estimated_delivery_time")),
         steps=steps,
+        rider_location=_location_from(sources, _RIDER_KEYS, included, _RIDER_TYPES),
+        delivery_location=_location_from(
+            sources, _DELIVERY_KEYS, included, _DELIVERY_TYPES
+        ),
+        restaurant_location=_location_from(
+            sources, _RESTAURANT_KEYS, included, _RESTAURANT_TYPES
+        ),
+        tracking_url=tracking_url,
         raw_attributes=attrs,
+        raw_included=[
+            {"type": item.get("type"), "attributes": item.get("attributes")}
+            for item in included
+        ],
     )
 
 
@@ -421,6 +580,10 @@ class DeliverooClient:
     def language(self) -> str:
         """Language of the configured market (used for demo texts)."""
         return self._market["lang"]
+
+    def status_page_url(self, order_id: str) -> str:
+        """Deliveroo's own tracking page (with the map) for an order."""
+        return f"{self._market['web']}/orders/{order_id}/status"
 
     def _base_headers(self) -> dict[str, str]:
         lang = self._market["lang"]

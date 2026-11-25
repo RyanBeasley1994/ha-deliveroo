@@ -398,3 +398,65 @@ def test_demo_payload_matches_the_real_document_shape() -> None:
 
     english = api.parse_order_status("demo", sim.build_demo_payload(100, 150, lang="xx", start_local=start))
     assert english.step_title == "In transit" and english.advisory
+
+
+def test_parse_status_locations() -> None:
+    payload = json.loads(json.dumps(STATUS_PAYLOAD))
+    attrs = payload["data"]["attributes"]
+    attrs["customer_facing_link"] = "https://deliveroo.co.uk/orders/1/status"
+    attrs["rider_location"] = {"lat": "51.5101", "lng": -0.1340}
+    payload["included"] += [
+        {"type": "restaurant", "attributes": {"location": {"latitude": 51.52, "longitude": -0.12}}},
+        {"type": "address", "attributes": {"coordinates": {"type": "Point", "coordinates": [-0.10, 51.50]}}},
+    ]
+    status = api.parse_order_status("1", payload)
+    assert status.rider_location == api.DeliverooLocation(51.5101, -0.134)
+    assert status.restaurant_location == api.DeliverooLocation(51.52, -0.12)
+    assert status.delivery_location == api.DeliverooLocation(51.50, -0.10)  # GeoJSON order
+    assert status.tracking_url == "https://deliveroo.co.uk/orders/1/status"
+    assert status.has_location
+    assert [item["type"] for item in status.raw_included] == ["order", "customer", "restaurant", "address"]
+
+
+def test_parse_status_without_locations() -> None:
+    status = api.parse_order_status("1", STATUS_PAYLOAD)
+    assert status.rider_location is None and status.delivery_location is None
+    assert not status.has_location and status.tracking_url is None
+    # Placeholders and nonsense are not map points
+    assert api.find_location({"lat": 0, "lng": 0}) is None
+    assert api.find_location({"lat": 123, "lng": 10}) is None
+    assert api.find_location({"lat": True, "lng": 10}) is None
+
+
+def test_status_page_url() -> None:
+    client = api.DeliverooClient(None, "uk", "x", "Europe/London")
+    assert client.status_page_url("51366330199") == "https://deliveroo.co.uk/orders/51366330199/status"
+
+
+def test_demo_payload_has_a_moving_rider() -> None:
+    from datetime import datetime, timezone
+
+    sim = sys.modules.get("deliveroo_simulation")
+    if sim is None:
+        sim_spec = importlib.util.spec_from_file_location(
+            "deliveroo_simulation", API_PATH.with_name("simulation.py")
+        )
+        sim = importlib.util.module_from_spec(sim_spec)
+        sim_spec.loader.exec_module(sim)
+    start = datetime(2026, 10, 5, 13, 0, tzinfo=timezone.utc)
+    home = (51.5, -0.1)
+
+    def frame(t):
+        return api.parse_order_status(
+            "demo", sim.build_demo_payload(t, 150, lang="en", start_local=start, home=home)
+        )
+
+    first, pickup, done = frame(0), frame(90), frame(150)
+    assert first.delivery_location == api.DeliverooLocation(*home)
+    assert pickup.rider_location == pickup.restaurant_location
+    assert done.rider_location == api.DeliverooLocation(*home)
+    assert first.rider_location != pickup.rider_location
+    # Without a home location the demo has no map, as before
+    assert not api.parse_order_status(
+        "demo", sim.build_demo_payload(0, 150, lang="en", start_local=start)
+    ).has_location

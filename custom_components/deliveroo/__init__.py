@@ -5,13 +5,29 @@ from __future__ import annotations
 import aiohttp
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.typing import ConfigType
 
 from .api import DeliverooClient
-from .const import CONF_MARKET, CONF_TOKEN
+from .const import CONF_MARKET, CONF_TOKEN, DOMAIN
 from .coordinator import DeliverooConfigEntry, DeliverooCoordinator
+from .services import async_setup_services
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.DEVICE_TRACKER,
+    Platform.SENSOR,
+]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the actions (once, for all accounts)."""
+    async_setup_services(hass)
+    return True
 
 
 def create_client(

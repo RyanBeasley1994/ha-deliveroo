@@ -54,13 +54,16 @@ Things to know:
 |---|---|
 | `binary_sensor.<name>_active_order` | On while an order is in progress |
 | `sensor.<name>_step` | Current step of Deliveroo's own timeline, e.g. "Preparing", "In transit" (localised by Deliveroo). Attributes: `step_index`, `step_count`, `steps` |
-| `sensor.<name>_order_status` | `idle`, `processing`, `completed`, `failed`. Note: Deliveroo reports `processing` for the whole order, so use the step sensor to tell phases apart. Attributes: order id/number, `rider_route`, `rider_status`, ETA status |
+| `sensor.<name>_order_status` | `idle`, `processing`, `completed`, `failed`. Note: Deliveroo reports `processing` for the whole order, so use the step sensor to tell phases apart. Attributes: order id/number, `rider_route`, `rider_status`, ETA status, `tracking_url` (Deliveroo's tracking page), `has_location` |
 | `sensor.<name>_status_message` | Deliveroo's status text. Attribute `advisory`: extra notice, e.g. the rider has another delivery on the way |
 | `sensor.<name>_estimated_arrival` | Arrival window as shown by Deliveroo, e.g. `20:20–20:50` |
 | `sensor.<name>_estimated_delivery_time` | Estimated delivery as a timestamp, for automations |
 | `sensor.<name>_progress` | Progress in % |
 | `sensor.<name>_rider_code` | Code to give to the rider |
 | `sensor.<name>_restaurant` | Restaurant name |
+| `device_tracker.<name>_rider_location` | Where the rider is, for a map card (see [Map](#map)) |
+| `device_tracker.<name>_delivery_location` | The delivery address of the current order |
+| `device_tracker.<name>_restaurant_location` | The restaurant of the current order |
 | `button.<name>_refresh_now` | Check for a new order immediately |
 | `button.<name>_simulate_order` | Replay a demo order (see below) |
 
@@ -98,14 +101,14 @@ actions:
 
 Event data: `order_id`, `state`, `step`, `step_index`, `step_count`, `message`, `advisory`, `eta`,
 `eta_status`, `estimated_delivery`, `progress`, `rider_route`, `rider_status`, `rider_code`,
-`restaurant`, `is_completed`, `is_failed`, `simulated`, `config_entry_id`.
+`restaurant`, `is_completed`, `is_failed`, `tracking_url`, `simulated`, `config_entry_id`.
 
 ## Dashboard card
 
 The card in the picture above is in [`examples/order-card.yaml`](examples/order-card.yaml)
 (Italian entity ids and texts: [`examples/order-card.it.yaml`](examples/order-card.it.yaml)).
 It stays compact while idle and expands during an order: progress bar, the five-step timeline,
-current step, arrival time and rider code.
+current step, arrival time and rider code. For a map of the order see [Map](#map).
 
 It needs three frontend cards from HACS: [Mushroom](https://github.com/piitaya/lovelace-mushroom),
 [card-mod](https://github.com/thomasloven/lovelace-card-mod) and
@@ -114,11 +117,42 @@ It needs three frontend cards from HACS: [Mushroom](https://github.com/piitaya/l
 Entity ids depend on your Home Assistant language, on the account name and on the area of the
 device, so check yours in **Settings → Entities** and find/replace them in the file before pasting.
 
+## Map
+
+While an order is in progress the three `device_tracker` entities carry the coordinates of the
+rider, the delivery address and the restaurant, so a standard **Map** card shows the order.
+They are `unknown` when there is no order, or when Deliveroo does not send that point.
+Every order also has a `tracking_url`: Deliveroo's own tracking page
+(`https://deliveroo.<country>/orders/<id>/status`) with its live map.
+
+To ask for all of it on demand (in a script, an automation or a popup), call the
+`deliveroo.get_order_map` action with a response variable:
+
+```yaml
+actions:
+  - action: deliveroo.get_order_map
+    response_variable: order
+  # order.active, order.order_id, order.restaurant, order.step, order.eta,
+  # order.rider_location / delivery_location / restaurant_location ({latitude, longitude} or null),
+  # order.tracking_url, order.map_url (OpenStreetMap link), order.has_location, order.simulated
+```
+
+`config_entry_id` is only needed when more than one Deliveroo account is configured.
+
+[`examples/order-map-popup.yaml`](examples/order-map-popup.yaml) has a map card, a button that
+opens it in a popup (with [browser_mod](https://github.com/thomasloven/hass-browser_mod)), a link
+to the tracking page and a notification that opens the map when the rider sets off.
+
+> The names Deliveroo uses for the coordinates in its tracking data are not confirmed yet, so the
+> integration accepts the usual spellings. If the map stays empty during a real order while the
+> tracking page shows a rider, please open an issue with the diagnostics file: it lists where the
+> points are, with their values redacted.
+
 ## Try it without ordering
 
 Press **Simulate order** (on the device page, under *Diagnostic*) to replay a full demo delivery
 in about two and a half minutes: the five steps, progress, arrival time, rider code and the final
-delivery. It drives the same sensors and fires the same `deliveroo_order_update` events as a real
+delivery, with a rider moving on the map around your Home Assistant home location. It drives the same sensors and fires the same `deliveroo_order_update` events as a real
 order, so you can build and check dashboards and notifications. Deliveroo is not contacted while
 the demo runs.
 

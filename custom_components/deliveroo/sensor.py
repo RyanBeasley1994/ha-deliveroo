@@ -45,6 +45,8 @@ SENSORS: tuple[DeliverooSensorDescription, ...] = (
             "rider_route": s.rider_route,
             "rider_status": s.rider_status,
             "updated_at": s.updated_at,
+            "tracking_url": s.tracking_url,
+            "has_location": s.has_location,
         },
     ),
     DeliverooSensorDescription(

@@ -86,6 +86,17 @@
       "simulate": {
         "name": "Simulate order"
       }
+    },
+    "device_tracker": {
+      "rider_location": {
+        "name": "Rider location"
+      },
+      "delivery_location": {
+        "name": "Delivery location"
+      },
+      "restaurant_location": {
+        "name": "Restaurant location"
+      }
     }
   },
   "options": {
@@ -102,6 +113,29 @@
           "active_interval": "Seconds, between 10 and 120. The Deliveroo website itself refreshes about every 15 seconds."
         }
       }
+    }
+  },
+  "services": {
+    "get_order_map": {
+      "name": "Get order map",
+      "description": "Returns where the current Deliveroo order is: rider, delivery address and restaurant coordinates, and a link to Deliveroo's tracking page. Use it with response_variable, for example to open a map popup.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "Deliveroo account to ask. Can be left empty if only one is configured."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "entry_not_found": {
+      "message": "No loaded Deliveroo account with id {entry_id}."
+    },
+    "entry_required": {
+      "message": "Several Deliveroo accounts are configured: choose one with config_entry_id."
+    },
+    "no_entries": {
+      "message": "No Deliveroo account is loaded."
     }
   }
 }

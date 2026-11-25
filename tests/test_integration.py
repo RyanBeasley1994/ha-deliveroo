@@ -603,3 +603,76 @@ async def test_real_orders_are_not_flagged_as_simulated(hass: HomeAssistant, api
     events = async_capture_events(hass, EVENT_ORDER_UPDATE)
     await setup_entry(hass)
     assert events[0].data["simulated"] is False
+
+
+# ── Map ──────────────────────────────────────────────────────────────────────
+
+
+async def test_map_entities_and_action(hass: HomeAssistant, api) -> None:
+    from custom_components.deliveroo.api import DeliverooLocation
+
+    api.status.return_value = status(
+        rider_location=DeliverooLocation(45.47, 9.19),
+        delivery_location=DeliverooLocation(45.46, 9.18),
+    )
+    await setup_entry(hass)
+
+    rider = hass.states.get("device_tracker.deliveroo_rider_location")
+    assert rider.attributes["latitude"] == 45.47 and rider.attributes["longitude"] == 9.19
+    assert rider.attributes["tracking_url"] == "https://deliveroo.it/orders/222/status"
+    assert hass.states.get("device_tracker.deliveroo_delivery_location").attributes["latitude"] == 45.46
+    assert hass.states.get("device_tracker.deliveroo_restaurant_location").state == "unknown"
+    assert hass.states.get("sensor.deliveroo_order_status").attributes["has_location"] is True
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_order_map", {}, blocking=True, return_response=True
+    )
+    assert response["active"] is True and response["order_id"] == "222"
+    assert response["rider_location"] == {"latitude": 45.47, "longitude": 9.19}
+    assert response["restaurant_location"] is None
+    assert response["tracking_url"] == "https://deliveroo.it/orders/222/status"
+    assert "mlat=45.47" in response["map_url"]
+    assert response["simulated"] is False
+
+
+async def test_map_action_when_idle_and_with_unknown_entry(hass: HomeAssistant, api) -> None:
+    from homeassistant.exceptions import ServiceValidationError
+
+    api.active.return_value = []
+    entry = await setup_entry(hass)
+    assert hass.states.get("device_tracker.deliveroo_rider_location").state == "unknown"
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_order_map", {"config_entry_id": entry.entry_id}, blocking=True, return_response=True
+    )
+    assert response == {"active": False, "order_id": None, "has_location": False}
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "get_order_map", {"config_entry_id": "nope"}, blocking=True, return_response=True
+        )
+
+
+async def test_demo_order_moves_on_the_map(hass: HomeAssistant, api, freezer) -> None:
+    from custom_components.deliveroo.const import SIMULATION_INTERVAL
+
+    api.active.return_value = []
+    await setup_entry(hass)
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.deliveroo_simulate_order"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    home = hass.states.get("device_tracker.deliveroo_delivery_location")
+    assert home.attributes["latitude"] == round(hass.config.latitude, 6)
+    first = hass.states.get("device_tracker.deliveroo_rider_location").attributes["latitude"]
+
+    freezer.tick(SIMULATION_INTERVAL * 6)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get("device_tracker.deliveroo_rider_location").attributes["latitude"] != first
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_order_map", {}, blocking=True, return_response=True
+    )
+    assert response["simulated"] is True and response["has_location"] is True
+    assert response["tracking_url"] is None  # no real Deliveroo page for the demo
